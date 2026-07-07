@@ -15,6 +15,13 @@ export const multiQueryTemplate = PromptTemplate.fromTemplate(
     alternative phrasings:`
 );
 
+export const hydeTemplate = PromptTemplate.fromTemplate(
+    `Write a short passage (2-4 sentences) that plausibly answers the question below, as if excerpted from a reference document on the topic. Use the conversation history to resolve pronouns and references. Write in a confident, factual, document-like style — do not hedge, do not say "it depends", do not address the reader. It does not matter whether the facts are correct; only the wording and style matter.
+    conversation history: {history}
+    question: {question}
+    passage:`
+);
+
 export const answerTemplate = PromptTemplate.fromTemplate(`You are a helpful and enthusiastic support bot who answers questions based on the provided context.
 The context is a list of numbered excerpts, each labeled "[Source N | Page P]" followed by its text.
 Your goal is to find the most relevant information from the context to answer the question.

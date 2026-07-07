@@ -3,6 +3,7 @@ import type { RunnableSequence } from "@langchain/core/runnables";
 import { condenseChain } from "./condense";
 import { naiveChain } from "./naive";
 import { multiQueryChain } from "./multi-query";
+import { hydeChain } from "./hyde";
 import type { RagStrategy } from "./types";
 import { DEFAULT_RAG_MODE, type RagMode } from "./modes";
 
@@ -13,6 +14,7 @@ export const RAG_STRATEGIES: Record<RagMode, RagStrategy> = {
     naive: naiveChain,
     condense: condenseChain,
     "multi-query": multiQueryChain,
+    hyde: hydeChain,
 };
 
 export function buildRagChain(mode: RagMode, filter: Record<string, unknown>): RunnableSequence {
