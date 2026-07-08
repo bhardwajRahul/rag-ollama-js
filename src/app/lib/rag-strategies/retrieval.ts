@@ -1,7 +1,7 @@
 import { RunnableSequence, RunnableLambda } from "@langchain/core/runnables";
 import type { DocumentInterface } from "@langchain/core/documents";
 
-import { retriever } from "../supabase";
+import { retriever, hybridSearcher } from "../supabase";
 import { buildContext } from "../../utils/helpers";
 
 // Retrieval piped into citation-context building — composed, not hand-orchestrated with
@@ -32,5 +32,12 @@ function dedupeDocuments(docGroups: DocumentInterface[][]): DocumentInterface[] 
 export const retrieveManyAndBuildContext = (filter: Record<string, unknown>) => RunnableSequence.from([
     RunnableLambda.from((queries: string[]) => retriever(filter).batch(queries)),
     RunnableLambda.from(dedupeDocuments),
+    RunnableLambda.from(buildContext),
+]).withConfig({ runName: "retrieveAndBuildContext" });
+
+// Hybrid variant: keyword + vector search fused in-database by the hybrid_search RPC
+// (see supabase.ts / supabaseScripts.txt STEP 9). Same runName convention as above.
+export const hybridRetrieveAndBuildContext = (filter: Record<string, unknown>) => RunnableSequence.from([
+    RunnableLambda.from(hybridSearcher(filter)),
     RunnableLambda.from(buildContext),
 ]).withConfig({ runName: "retrieveAndBuildContext" });

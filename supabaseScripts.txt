@@ -127,3 +127,63 @@ $$ LANGUAGE plpgsql;
 -- Do this from the Supabase Dashboard:
 --   Storage → New bucket → name: "document_store" → Private
 -- ============================================================
+
+
+-- ============================================================
+-- STEP 9: Hybrid search (keyword + vector, reciprocal rank fusion)
+-- Adds a generated full-text column to documents (auto-populated,
+-- no ingestion changes needed) and the hybrid_search RPC used by
+-- the "hybrid" RAG mode. Safe to run on an existing project.
+-- NOTE: vector(768) must stay in sync with match_documents above.
+-- ============================================================
+ALTER TABLE documents
+  ADD COLUMN fts tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
+
+CREATE INDEX documents_fts_idx ON documents USING gin(fts);
+
+CREATE OR REPLACE FUNCTION hybrid_search(
+  query_text text,
+  query_embedding vector(768),
+  match_count int DEFAULT 4,
+  filter jsonb DEFAULT '{}',
+  full_text_weight float DEFAULT 1,
+  semantic_weight float DEFAULT 1,
+  rrf_k int DEFAULT 50
+) RETURNS TABLE (
+  id bigint,
+  content text,
+  metadata jsonb
+)
+LANGUAGE sql
+AS $$
+WITH full_text AS (
+  SELECT documents.id,
+         row_number() OVER (
+           ORDER BY ts_rank_cd(documents.fts, websearch_to_tsquery('english', query_text)) DESC
+         ) AS rank_ix
+  FROM documents
+  WHERE documents.fts @@ websearch_to_tsquery('english', query_text)
+    AND documents.metadata @> filter
+  ORDER BY rank_ix
+  LIMIT match_count * 2
+),
+semantic AS (
+  SELECT documents.id,
+         row_number() OVER (
+           ORDER BY documents.embedding <=> query_embedding
+         ) AS rank_ix
+  FROM documents
+  WHERE documents.metadata @> filter
+  ORDER BY rank_ix
+  LIMIT match_count * 2
+)
+SELECT d.id, d.content, d.metadata
+FROM full_text
+FULL OUTER JOIN semantic ON full_text.id = semantic.id
+JOIN documents d ON d.id = COALESCE(full_text.id, semantic.id)
+ORDER BY
+  COALESCE(1.0 / (rrf_k + full_text.rank_ix), 0.0) * full_text_weight +
+  COALESCE(1.0 / (rrf_k + semantic.rank_ix), 0.0) * semantic_weight
+  DESC
+LIMIT match_count;
+$$;
