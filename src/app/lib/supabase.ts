@@ -18,7 +18,7 @@ export const vectorStore = (filter?: Record<string, unknown>) => new SupabaseVec
     filter: filter || {}
 });
 
-export const retriever = (filter: Record<string, unknown>) => vectorStore(filter).asRetriever();
+export const retriever = (filter: Record<string, unknown>, k?: number) => vectorStore(filter).asRetriever(k);
 
 interface HybridSearchRow {
     id: number;

@@ -22,6 +22,14 @@ export const hydeTemplate = PromptTemplate.fromTemplate(
     passage:`
 );
 
+export const rerankTemplate = PromptTemplate.fromTemplate(
+    `On a scale from 0.0 to 1.0, how relevant is the following passage to answering the question? Judge relevance only — ignore writing quality or completeness.
+    Reply with ONLY a number between 0 and 1, nothing else.
+    question: {question}
+    passage: {passage}
+    relevance score:`
+);
+
 export const answerTemplate = PromptTemplate.fromTemplate(`You are a helpful and enthusiastic support bot who answers questions based on the provided context.
 The context is a list of numbered excerpts, each labeled "[Source N | Page P]" followed by its text.
 Your goal is to find the most relevant information from the context to answer the question.
