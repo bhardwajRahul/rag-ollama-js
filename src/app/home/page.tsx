@@ -2,14 +2,17 @@
 
 import { useState, useEffect } from "react";
 import { parse } from 'marked';
-import { RAG_MODES, DEFAULT_RAG_MODE, type RagMode } from "@/app/lib/rag-strategies/modes";
+import { RAG_MODES, RAG_STAGE_LABELS, DEFAULT_RAG_MODE, type RagMode, type RagStage } from "@/app/lib/rag-strategies/modes";
 import { Spinner } from "@/app/components/Spinner";
+import { RagPipelineVisualizer, type LiveStageState } from "@/app/components/RagPipelineVisualizer";
 import type { RetrievedSource } from "@/app/utils/helpers";
 
 interface ChatMessage {
     text: string;
     sender: "User" | "System";
     sources?: RetrievedSource[];
+    ragMode?: RagMode;
+    pipelineTrace?: Record<string, LiveStageState>;
 }
 
 // Turns the LLM's inline "[Source 2]" citation markers into markdown links so `marked`
@@ -89,7 +92,7 @@ export default function Home() {
 
         const nextMessages = [...messages, { text: input, sender: "User" as const }];
         const systemIndex = nextMessages.length;
-        setMessages([...nextMessages, { text: "", sender: "System", sources: [] }]);
+        setMessages([...nextMessages, { text: "", sender: "System", sources: [], ragMode, pipelineTrace: {} }]);
         setInput("");
         setLoading(true);
 
@@ -111,6 +114,7 @@ export default function Home() {
             const decoder = new TextDecoder("utf-8");
             let buffer = "";
             let answerText = "";
+            let pipelineTrace: Record<string, LiveStageState> = {};
 
             const updateSystemMessage = (patch: Partial<ChatMessage>) => {
                 setMessages((prev) => {
@@ -147,6 +151,15 @@ export default function Home() {
                     } else if (eventName === "error") {
                         answerText += `\n\n_${payload.message}_`;
                         updateSystemMessage({ text: answerText });
+                    } else if (eventName === "stage") {
+                        pipelineTrace = {
+                            ...pipelineTrace,
+                            [payload.stageId]: {
+                                status: payload.status === "start" ? "active" : "done",
+                                data: payload.data ?? pipelineTrace[payload.stageId]?.data,
+                            },
+                        };
+                        updateSystemMessage({ pipelineTrace });
                     }
                 }
             }
@@ -207,7 +220,7 @@ export default function Home() {
 
             {/* Chat Section */}
             <div className={`${activePanel === 'chat' ? 'flex' : 'hidden'} min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-card md:flex md:w-1/2`}>
-                <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
+                <div className="flex shrink-0 flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                     <div>
                         <h2 className="text-sm font-semibold text-ink">Chat</h2>
                         <p className="text-xs text-ink-soft">Ask a question about your document</p>
@@ -216,17 +229,37 @@ export default function Home() {
                         <label htmlFor="ragMode" className="hidden text-[11px] font-semibold uppercase tracking-wide text-ink-faint sm:inline">Mode</label>
                         <select
                             id="ragMode"
-                            className="rounded-lg border border-border bg-paper px-2.5 py-1.5 font-mono text-xs text-ink outline-none transition-shadow focus:border-accent focus:ring-2 focus:ring-accent/25"
+                            className="w-full rounded-lg border border-border bg-paper px-2.5 py-1.5 font-mono text-xs text-ink outline-none transition-shadow focus:border-accent focus:ring-2 focus:ring-accent/25 sm:w-auto"
                             value={ragMode}
                             onChange={(e) => setRagMode(e.target.value as RagMode)}
                             disabled={loading}
                         >
-                            {RAG_MODES.map((mode) => (
-                                <option key={mode.value} value={mode.value}>{mode.label}</option>
+                            {(Object.keys(RAG_STAGE_LABELS) as RagStage[]).map((stage) => (
+                                <optgroup key={stage} label={RAG_STAGE_LABELS[stage]}>
+                                    {RAG_MODES.filter((mode) => mode.stage === stage).map((mode) => (
+                                        <option key={mode.value} value={mode.value}>{mode.label}</option>
+                                    ))}
+                                </optgroup>
                             ))}
                         </select>
                     </div>
                 </div>
+
+                {/* Live/browsable pipeline: shows every step the selected mode runs through, lighting
+                    up in real time as the backend actually executes it. Collapsed by default — it's a
+                    teaching aid you opt into, not something that should push the actual conversation
+                    off-screen (especially on short mobile viewports). */}
+                <details className="shrink-0 border-b border-border px-4 py-3">
+                    <summary className="cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wide text-ink-faint hover:text-accent">
+                        How this mode works
+                    </summary>
+                    <div className="mt-3 max-h-64 overflow-y-auto">
+                        <RagPipelineVisualizer
+                            mode={ragMode}
+                            liveStages={loading ? (messages[messages.length - 1]?.pipelineTrace ?? {}) : null}
+                        />
+                    </div>
+                </details>
 
                 <div className="flex-1 space-y-3 overflow-y-auto p-4">
                     {messages.map((message, index) => (
@@ -256,6 +289,16 @@ export default function Home() {
                                         </button>
                                     ))}
                                 </div>
+                            )}
+                            {message.sender === "System" && message.ragMode && !!Object.keys(message.pipelineTrace ?? {}).length && (
+                                <details className="mt-2 border-t border-border/60 pt-2">
+                                    <summary className="cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wide text-ink-faint hover:text-accent">
+                                        How this answer was generated
+                                    </summary>
+                                    <div className="mt-2">
+                                        <RagPipelineVisualizer mode={message.ragMode} liveStages={message.pipelineTrace ?? null} />
+                                    </div>
+                                </details>
                             )}
                         </div>
                     ))}

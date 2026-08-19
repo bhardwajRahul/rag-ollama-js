@@ -12,7 +12,7 @@ import { rerankTemplate } from "../prompts";
 // read its `sources` output via `.streamEvents()` as soon as it finishes, ahead of the answer
 // tokens that follow later in the same chain.
 export const retrieveAndBuildContext = (filter: Record<string, unknown>) => RunnableSequence.from([
-    retriever(filter),
+    retriever(filter).withConfig({ runName: "vectorRetrieve" }),
     RunnableLambda.from(buildContext),
 ]).withConfig({ runName: "retrieveAndBuildContext" });
 
@@ -33,15 +33,15 @@ function dedupeDocuments(docGroups: DocumentInterface[][]): DocumentInterface[] 
 // builds citation context. Carries the same runName as the single-query version so the
 // chat route's `sources` extraction works identically for every strategy.
 export const retrieveManyAndBuildContext = (filter: Record<string, unknown>) => RunnableSequence.from([
-    RunnableLambda.from((queries: string[]) => retriever(filter).batch(queries)),
-    RunnableLambda.from(dedupeDocuments),
+    RunnableLambda.from((queries: string[]) => retriever(filter).batch(queries)).withConfig({ runName: "vectorRetrieveMany" }),
+    RunnableLambda.from(dedupeDocuments).withConfig({ runName: "dedupeCandidates" }),
     RunnableLambda.from(buildContext),
 ]).withConfig({ runName: "retrieveAndBuildContext" });
 
 // Hybrid variant: keyword + vector search fused in-database by the hybrid_search RPC
 // (see supabase.ts / supabaseScripts.txt STEP 9). Same runName convention as above.
 export const hybridRetrieveAndBuildContext = (filter: Record<string, unknown>) => RunnableSequence.from([
-    RunnableLambda.from(hybridSearcher(filter)),
+    RunnableLambda.from(hybridSearcher(filter)).withConfig({ runName: "hybridSearch" }),
     RunnableLambda.from(buildContext),
 ]).withConfig({ runName: "retrieveAndBuildContext" });
 
@@ -61,28 +61,60 @@ function clamp01(value: number): number {
 
 // Ollama has no cross-encoder model, so "re-ranking" here means asking the chat LLM to
 // pointwise-score each candidate's relevance (0-1) against the question, one call per chunk.
-async function scoreRelevance(question: string, doc: DocumentInterface): Promise<number> {
-    const raw = await rerankScoreChain.invoke({ question, passage: doc.pageContent });
-    return clamp01(parseFloat(raw));
+// These 20 calls run outside the outer chain's traced execution (a bare .invoke() with no
+// config/callbacks threaded through), so they never reach `chain.streamEvents()` in route.ts
+// no matter what runName they're given — the prompt/completion has to be captured here
+// directly and carried out as data, not surfaced via the streaming instrumentation.
+async function scoreRelevance(question: string, doc: DocumentInterface): Promise<{ score: number; prompt: string; completion: string }> {
+    const prompt = await rerankTemplate.format({ question, passage: doc.pageContent });
+    const completion = await rerankScoreChain.invoke({ question, passage: doc.pageContent });
+    return { score: clamp01(parseFloat(completion)), prompt, completion };
 }
 
-async function rerank(question: string, docs: DocumentInterface[]): Promise<DocumentInterface[]> {
-    const scores = await Promise.all(docs.map((doc) => scoreRelevance(question, doc)));
-    return docs
-        .map((doc, index) => ({ doc, score: scores[index] }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, RERANK_KEEP_COUNT)
-        .map(({ doc }) => doc);
+export interface ScoredCandidate {
+    snippet: string;
+    pageNumber: number;
+    score: number;
+    kept: boolean;
+    prompt: string;
+    completion: string;
+}
+
+// Scores every candidate and returns the full ranked table (so the pipeline visualizer can show
+// which candidates were dropped, not just the ones that survived, plus each one's raw LLM
+// prompt/response) alongside the kept documents.
+async function scoreCandidates(question: string, docs: DocumentInterface[]): Promise<{ table: ScoredCandidate[]; kept: DocumentInterface[] }> {
+    const scored = await Promise.all(docs.map((doc) => scoreRelevance(question, doc)));
+    const ranked = docs
+        .map((doc, index) => ({ doc, ...scored[index] }))
+        .sort((a, b) => b.score - a.score);
+    const kept = ranked.slice(0, RERANK_KEEP_COUNT).map(({ doc }) => doc);
+    const keptSet = new Set(kept);
+    const table = ranked.map(({ doc, score, prompt, completion }) => ({
+        snippet: doc.pageContent.slice(0, 160),
+        pageNumber: doc.metadata?.pageNumber ?? 0,
+        score,
+        kept: keptSet.has(doc),
+        prompt,
+        completion,
+    }));
+    return { table, kept };
 }
 
 // Re-ranking: vector similarity is a cheap proxy for relevance and sometimes wrong — it can
 // rank a tangentially-related chunk above one that actually answers the question. Over-fetch
 // a wider candidate pool (20) by cosine similarity, have the LLM score each one directly
-// against the question, and keep only the top 4 by that score.
+// against the question, and keep only the top 4 by that score. Split into two named steps
+// (rather than one hand-rolled async function) so the chat route can surface the over-fetch
+// count and the full scored table — including the dropped candidates — via streamEvents().
 export const rerankRetrieveAndBuildContext = (filter: Record<string, unknown>) => RunnableSequence.from([
     RunnableLambda.from(async (question: string) => {
         const candidates = await retriever(filter, RERANK_FETCH_COUNT).invoke(question);
-        return rerank(question, candidates);
-    }),
+        return { question, candidates };
+    }).withConfig({ runName: "overFetchCandidates" }),
+    RunnableLambda.from(({ question, candidates }: { question: string; candidates: DocumentInterface[] }) =>
+        scoreCandidates(question, candidates)
+    ).withConfig({ runName: "scoreCandidates" }),
+    ({ kept }: { table: ScoredCandidate[]; kept: DocumentInterface[] }) => kept,
     RunnableLambda.from(buildContext),
 ]).withConfig({ runName: "retrieveAndBuildContext" });

@@ -10,11 +10,15 @@ import type { RagStrategy } from "./types";
 // without also picking up the hypothetical-passage draft below.
 const answerLLM = llm.withConfig({ runName: "answerLLM" });
 
+// Named distinctly from hypotheticalChain's own "hydeDraft" runName so the chat route can
+// capture the literal rendered prompt/completion for this LLM call (see LLM_STAGE_RUNNAMES in route.ts).
+const hydeLLM = llm.withConfig({ runName: "hydeDraftLLM" });
+
 const hypotheticalChain = RunnableSequence.from([
     hydeTemplate,
-    llm,
+    hydeLLM,
     new StringOutputParser()
-]);
+]).withConfig({ runName: "hydeDraft" });
 
 const retrieverChain = (filter: Record<string, unknown>) => RunnableSequence.from([
     (result: { hypotheticalAnswer: string }) => result.hypotheticalAnswer,

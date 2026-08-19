@@ -10,11 +10,16 @@ import type { RagStrategy } from "./types";
 // without also picking up the standalone-question rewrite below.
 const answerLLM = llm.withConfig({ runName: "answerLLM" });
 
+// Named distinctly from the outer promptChain's own "standaloneQuestion" runName so the chat
+// route can capture the literal rendered prompt/completion for this LLM call without colliding
+// with the chain-level start/end events used for stage progress (see LLM_STAGE_RUNNAMES in route.ts).
+const standaloneLLM = llm.withConfig({ runName: "standaloneQuestionLLM" });
+
 const promptChain = RunnableSequence.from([
     standaloneTemplate,
-    llm,
+    standaloneLLM,
     new StringOutputParser()
-]);
+]).withConfig({ runName: "standaloneQuestion" });
 
 const retrieverChain = (filter: Record<string, unknown>) => RunnableSequence.from([
     (result: { standaloneQuestion: string }) => result.standaloneQuestion,
