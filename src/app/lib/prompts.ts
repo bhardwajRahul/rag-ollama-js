@@ -30,6 +30,13 @@ export const rerankTemplate = PromptTemplate.fromTemplate(
     relevance score:`
 );
 
+export const compressionTemplate = PromptTemplate.fromTemplate(
+    `Given a question and a passage, remove every sentence from the passage that is NOT relevant to answering the question. Keep the relevant sentences exactly as written — do not paraphrase, summarize, reorder, or add anything of your own. If no sentence is relevant, reply with an empty string.
+    question: {question}
+    passage: {passage}
+    relevant sentences only:`
+);
+
 export const answerTemplate = PromptTemplate.fromTemplate(`You are a helpful and enthusiastic support bot who answers questions based on the provided context.
 The context is a list of numbered excerpts, each labeled "[Source N | Page P]" followed by its text.
 Your goal is to find the most relevant information from the context to answer the question.

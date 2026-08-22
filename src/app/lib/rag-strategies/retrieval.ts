@@ -1,11 +1,11 @@
-import { RunnableSequence, RunnableLambda } from "@langchain/core/runnables";
+import { RunnableSequence, RunnableLambda, RunnablePassthrough } from "@langchain/core/runnables";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import type { DocumentInterface } from "@langchain/core/documents";
 
 import { retriever, hybridSearcher } from "../supabase";
 import { buildContext } from "../../utils/helpers";
 import { llm } from "../ollama";
-import { rerankTemplate } from "../prompts";
+import { rerankTemplate, compressionTemplate } from "../prompts";
 
 // Retrieval piped into citation-context building — composed, not hand-orchestrated with
 // async/await — as one named runnable step shared by every strategy, so the chat route can
@@ -116,5 +116,75 @@ export const rerankRetrieveAndBuildContext = (filter: Record<string, unknown>) =
         scoreCandidates(question, candidates)
     ).withConfig({ runName: "scoreCandidates" }),
     ({ kept }: { table: ScoredCandidate[]; kept: DocumentInterface[] }) => kept,
+    RunnableLambda.from(buildContext),
+]).withConfig({ runName: "retrieveAndBuildContext" });
+
+const compressionChain = RunnableSequence.from([
+    compressionTemplate,
+    llm,
+    new StringOutputParser(),
+]);
+
+interface CompressibleDoc {
+    pageContent: string;
+    metadata?: { pageNumber?: number };
+}
+
+export interface CompressedChunk {
+    pageNumber: number;
+    original: string;
+    compressed: string;
+    reduced: boolean;
+    prompt: string;
+    completion: string;
+}
+
+// Same limitation as scoreRelevance above: a bare .invoke() outside the parent chain's traced
+// execution, so the prompt/completion is captured here directly rather than via streamEvents().
+async function compressChunk(question: string, doc: DocumentInterface): Promise<{ doc: CompressibleDoc; row: CompressedChunk }> {
+    const prompt = await compressionTemplate.format({ question, passage: doc.pageContent });
+    const completion = await compressionChain.invoke({ question, passage: doc.pageContent });
+    const trimmed = completion.trim();
+    // Never let a chunk collapse to nothing — if the LLM strips every sentence, fall back to
+    // the original rather than handing the answer step an empty, uncited source.
+    const keptContent = trimmed || doc.pageContent;
+    return {
+        doc: { pageContent: keptContent, metadata: doc.metadata },
+        row: {
+            pageNumber: doc.metadata?.pageNumber ?? 0,
+            original: doc.pageContent.slice(0, 200),
+            compressed: keptContent.slice(0, 200),
+            reduced: trimmed.length > 0 && trimmed.length < doc.pageContent.length,
+            prompt,
+            completion,
+        },
+    };
+}
+
+async function compressCandidates(question: string, docs: DocumentInterface[]): Promise<{ table: CompressedChunk[]; compressed: CompressibleDoc[] }> {
+    const results = await Promise.all(docs.map((doc) => compressChunk(question, doc)));
+    return {
+        table: results.map((result) => result.row),
+        compressed: results.map((result) => result.doc),
+    };
+}
+
+// Contextual compression: a retrieved chunk is often a mix of relevant and irrelevant
+// sentences — the irrelevant ones are just noise the answer LLM has to read past (and can
+// distract it into citing text that doesn't actually support the answer). Strip each chunk
+// down to only the sentences relevant to the question before it reaches the answer prompt.
+// The first step is a parallel branch (retrieve the docs, passthrough the question) rather than
+// a custom lambda like overFetchCandidates' — that keeps its input/output shape identical to
+// the plain retriever step other modes name "vectorRetrieve", so it can share that runName
+// (and the pipeline visualizer's shared "Vector Retrieval" stage copy) instead of needing its own.
+export const compressRetrieveAndBuildContext = (filter: Record<string, unknown>) => RunnableSequence.from([
+    {
+        docs: retriever(filter).withConfig({ runName: "vectorRetrieve" }),
+        question: new RunnablePassthrough<string>(),
+    },
+    RunnableLambda.from(({ question, docs }: { question: string; docs: DocumentInterface[] }) =>
+        compressCandidates(question, docs)
+    ).withConfig({ runName: "compressChunks" }),
+    ({ compressed }: { table: CompressedChunk[]; compressed: CompressibleDoc[] }) => compressed,
     RunnableLambda.from(buildContext),
 ]).withConfig({ runName: "retrieveAndBuildContext" });

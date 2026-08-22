@@ -1,5 +1,5 @@
 // Client-safe: no LangChain/LLM imports here, so this can be imported from UI components.
-export type RagMode = "naive" | "condense" | "multi-query" | "hyde" | "hybrid" | "rerank";
+export type RagMode = "naive" | "condense" | "multi-query" | "hyde" | "hybrid" | "rerank" | "contextual-compression";
 
 // Which stage of the pipeline each mode modifies, so the UI can group modes by
 // what they actually change rather than listing them as one flat, undifferentiated list.
@@ -20,4 +20,5 @@ export const RAG_MODES: { value: RagMode; label: string; stage: RagStage }[] = [
     { value: "multi-query", label: "Multi-Query", stage: "query-transformation" },
     { value: "hyde", label: "HyDE", stage: "query-transformation" },
     { value: "rerank", label: "Re-ranking", stage: "post-retrieval" },
+    { value: "contextual-compression", label: "Contextual Compression", stage: "post-retrieval" },
 ];

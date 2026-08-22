@@ -46,6 +46,7 @@ function shapeStageData(name: string, output: unknown): unknown {
         case "overFetchCandidates":
             return { count: (output as { candidates: DocLike[] }).candidates.length };
         case "scoreCandidates":
+        case "compressChunks":
         case "standaloneQuestion":
         case "generatePhrasings":
         case "hydeDraft":

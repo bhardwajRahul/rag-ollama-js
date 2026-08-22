@@ -110,4 +110,15 @@ export const RAG_PIPELINE_STAGES: Record<RagMode, PipelineStageMeta[]> = {
         },
         answerLLM,
     ],
+    "contextual-compression": [
+        vectorRetrieve,
+        {
+            id: "compressChunks",
+            label: "Contextual Compression",
+            what: "Asks the LLM to strip each retrieved chunk down to only the sentences relevant to the question.",
+            why: "A retrieved chunk is often a mix of relevant and irrelevant sentences — the irrelevant ones are just noise the answer LLM has to read past, and can distract it into citing text that doesn't really support the answer.",
+            kind: "score",
+        },
+        answerLLM,
+    ],
 };

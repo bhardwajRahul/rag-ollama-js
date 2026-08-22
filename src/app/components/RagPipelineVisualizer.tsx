@@ -28,6 +28,19 @@ interface ScoreTable {
     table: ScoredCandidate[];
 }
 
+interface CompressedChunk {
+    pageNumber: number;
+    original: string;
+    compressed: string;
+    reduced: boolean;
+    prompt: string;
+    completion: string;
+}
+
+interface CompressionTable {
+    table: CompressedChunk[];
+}
+
 interface LlmIO {
     prompt: string;
     completion: string;
@@ -51,6 +64,10 @@ function isDocSummary(data: unknown): data is DocSummary {
 }
 
 function isScoreTable(data: unknown): data is ScoreTable {
+    return typeof data === "object" && data !== null && "table" in data;
+}
+
+function isCompressionTable(data: unknown): data is CompressionTable {
     return typeof data === "object" && data !== null && "table" in data;
 }
 
@@ -174,6 +191,47 @@ function StageOutput({ id, kind, output }: { id: string; kind: PipelineStageKind
                                 <span className="shrink-0 font-mono">{row.score.toFixed(2)}</span>
                             </summary>
                             <div className="space-y-1.5 border-t border-border px-2 py-1.5">
+                                <div>
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide">Prompt sent to LLM</p>
+                                    <pre className="mt-0.5 max-h-32 overflow-y-auto whitespace-pre-wrap rounded border border-border bg-paper px-2 py-1 font-mono text-[10px] text-ink-soft">{row.prompt}</pre>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide">LLM response</p>
+                                    <pre className="mt-0.5 max-h-32 overflow-y-auto whitespace-pre-wrap rounded border border-border bg-paper px-2 py-1 font-mono text-[10px] text-ink-soft">{row.completion}</pre>
+                                </div>
+                            </div>
+                        </details>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
+    if (id === "compressChunks" && isCompressionTable(output)) {
+        return (
+            <div className="mt-1.5">
+                <OutputLabel kind={kind} />
+                <div className="mt-0.5 max-h-64 space-y-1 overflow-y-auto pr-1">
+                    {output.table.map((row, index) => (
+                        <details
+                            key={index}
+                            className={`rounded-lg border text-[11px] ${
+                                row.reduced ? "border-accent bg-accent-soft text-accent" : "border-border bg-surface text-ink-faint"
+                            }`}
+                        >
+                            <summary className="flex cursor-pointer select-none items-center justify-between gap-2 px-2 py-1">
+                                <span>Page {row.pageNumber}</span>
+                                <span className="shrink-0">{row.reduced ? "trimmed" : "kept as-is"}</span>
+                            </summary>
+                            <div className="space-y-1.5 border-t border-border px-2 py-1.5">
+                                <div>
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide">Original chunk</p>
+                                    <p className="mt-0.5 rounded border border-border bg-paper px-2 py-1 text-ink-soft">{row.original}</p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide">After compression</p>
+                                    <p className="mt-0.5 rounded border border-border bg-paper px-2 py-1 text-ink-soft">{row.compressed || "(nothing kept — fell back to original)"}</p>
+                                </div>
                                 <div>
                                     <p className="text-[10px] font-semibold uppercase tracking-wide">Prompt sent to LLM</p>
                                     <pre className="mt-0.5 max-h-32 overflow-y-auto whitespace-pre-wrap rounded border border-border bg-paper px-2 py-1 font-mono text-[10px] text-ink-soft">{row.prompt}</pre>
