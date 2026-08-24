@@ -2,7 +2,7 @@ import { RunnableSequence, RunnableLambda, RunnablePassthrough } from "@langchai
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import type { DocumentInterface } from "@langchain/core/documents";
 
-import { retriever, hybridSearcher } from "../supabase";
+import { retriever, hybridSearcher, sentenceRetriever } from "../supabase";
 import { buildContext } from "../../utils/helpers";
 import { llm } from "../ollama";
 import { rerankTemplate, compressionTemplate } from "../prompts";
@@ -186,5 +186,35 @@ export const compressRetrieveAndBuildContext = (filter: Record<string, unknown>)
         compressCandidates(question, docs)
     ).withConfig({ runName: "compressChunks" }),
     ({ compressed }: { table: CompressedChunk[]; compressed: CompressibleDoc[] }) => compressed,
+    RunnableLambda.from(buildContext),
+]).withConfig({ runName: "retrieveAndBuildContext" });
+
+// Sentence-window retrieval matched on individual sentences (tighter embeddings than a
+// paragraph chunk, so retrieval precision improves), but a bare sentence is too little
+// context to answer from — swap each hit's pageContent for its precomputed window
+// (buildSentenceWindowDocuments in ../sentence-window.ts) before building citation context.
+// Adjacent sentence hits can expand into identical or overlapping windows, so dedupe by the
+// resulting window text, same pattern as dedupeDocuments above.
+function expandToWindow(docs: DocumentInterface[]): CompressibleDoc[] {
+    const seen = new Set<string>();
+    const expanded: CompressibleDoc[] = [];
+    for (const doc of docs) {
+        const windowText = (doc.metadata?.windowText as string | undefined) ?? doc.pageContent;
+        if (seen.has(windowText)) continue;
+        seen.add(windowText);
+        expanded.push({ pageContent: windowText, metadata: doc.metadata });
+    }
+    return expanded;
+}
+
+// Sentence-window variant: retrieves against sentence-level embeddings (sentenceRetriever,
+// sentence_documents table — see supabase.ts / supabaseScripts.txt STEP 10) instead of the
+// paragraph-level documents table, then expands each hit to its surrounding window before
+// building citation context. The retrieve step reuses the "vectorRetrieve" runName and stays
+// bare Document[] output (same guardrail compressRetrieveAndBuildContext follows above), so
+// expansion is a second, distinctly-named step rather than folded into the retriever itself.
+export const sentenceWindowRetrieveAndBuildContext = (filter: Record<string, unknown>) => RunnableSequence.from([
+    sentenceRetriever(filter).withConfig({ runName: "vectorRetrieve" }),
+    RunnableLambda.from(expandToWindow).withConfig({ runName: "expandWindow" }),
     RunnableLambda.from(buildContext),
 ]).withConfig({ runName: "retrieveAndBuildContext" });

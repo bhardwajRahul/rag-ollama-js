@@ -20,6 +20,15 @@ export const vectorStore = (filter?: Record<string, unknown>) => new SupabaseVec
 
 export const retriever = (filter: Record<string, unknown>, k?: number) => vectorStore(filter).asRetriever(k);
 
+export const sentenceVectorStore = (filter?: Record<string, unknown>) => new SupabaseVectorStore(embeddings, {
+    client: supabaseClient,
+    tableName: "sentence_documents",
+    queryName: "match_sentence_documents",
+    filter: filter || {}
+});
+
+export const sentenceRetriever = (filter: Record<string, unknown>, k?: number) => sentenceVectorStore(filter).asRetriever(k);
+
 interface HybridSearchRow {
     id: number;
     content: string;

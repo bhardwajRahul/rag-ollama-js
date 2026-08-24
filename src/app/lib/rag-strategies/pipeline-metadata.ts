@@ -32,6 +32,14 @@ const answerLLM: PipelineStageMeta = {
     kind: "generate",
 };
 
+const sentenceVectorRetrieve: PipelineStageMeta = {
+    id: "vectorRetrieve",
+    label: "Sentence Retrieval",
+    what: "Embeds the query and finds the most similar individual sentences (not paragraph chunks) in the document by cosine similarity.",
+    why: "Embedding a whole paragraph blurs its meaning across every sentence in it, which can bury the one sentence that actually answers the question. Indexing single sentences gives a tighter, more precise match.",
+    kind: "retrieve",
+};
+
 export const RAG_PIPELINE_STAGES: Record<RagMode, PipelineStageMeta[]> = {
     naive: [
         vectorRetrieve,
@@ -117,6 +125,17 @@ export const RAG_PIPELINE_STAGES: Record<RagMode, PipelineStageMeta[]> = {
             label: "Contextual Compression",
             what: "Asks the LLM to strip each retrieved chunk down to only the sentences relevant to the question.",
             why: "A retrieved chunk is often a mix of relevant and irrelevant sentences — the irrelevant ones are just noise the answer LLM has to read past, and can distract it into citing text that doesn't really support the answer.",
+            kind: "score",
+        },
+        answerLLM,
+    ],
+    "sentence-window": [
+        sentenceVectorRetrieve,
+        {
+            id: "expandWindow",
+            label: "Expand to Window",
+            what: "Swaps each retrieved sentence for a window of it plus the 2 sentences before and after, precomputed at ingestion time.",
+            why: "A single matched sentence is usually too little context to answer from on its own — expanding it back out to its surrounding sentences restores the context lost by indexing at sentence granularity.",
             kind: "score",
         },
         answerLLM,

@@ -38,6 +38,7 @@ function shapeStageData(name: string, output: unknown): unknown {
         case "vectorRetrieve":
         case "dedupeCandidates":
         case "hybridSearch":
+        case "expandWindow":
             return summarizeDocs(output as DocLike[]);
         case "vectorRetrieveMany":
             // The batch fan-out step's output is one Document[] per query phrasing — flatten
