@@ -2,8 +2,9 @@ import { supabaseClient } from '@/app/lib/supabase';
 import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 
-import { vectorStore, sentenceVectorStore } from '@/app/lib/supabase';
+import { vectorStore, sentenceVectorStore, childVectorStore } from '@/app/lib/supabase';
 import { buildSentenceWindowDocuments } from '@/app/lib/sentence-window';
+import { buildChildDocuments } from '@/app/lib/parent-document';
 
 export async function GET(req: Request) {
     const userId = req.headers.get('User-Id');
@@ -66,6 +67,7 @@ export async function POST(req: Request) {
     const sentenceDocOutput = pageContent.flatMap((text, i) =>
         buildSentenceWindowDocuments(text, pageHeaders[i])
     );
+    const childDocOutput = await buildChildDocuments(docOutput);
 
     const { error: deleteError } = await supabaseClient.rpc('delete_documents_by_user', { userid: userId });
     if (deleteError) throw new Response('Error in deleting embeddings!', { status: 400 });
@@ -73,7 +75,11 @@ export async function POST(req: Request) {
     const { error: deleteSentenceError } = await supabaseClient.rpc('delete_sentence_documents_by_user', { userid: userId });
     if (deleteSentenceError) throw new Response('Error in deleting sentence embeddings!', { status: 400 });
 
+    const { error: deleteChildError } = await supabaseClient.rpc('delete_child_documents_by_user', { userid: userId });
+    if (deleteChildError) throw new Response('Error in deleting child embeddings!', { status: 400 });
+
     await vectorStore().addDocuments(docOutput);
     await sentenceVectorStore().addDocuments(sentenceDocOutput);
+    await childVectorStore().addDocuments(childDocOutput);
     return new Response('', { status: 201 });
 }

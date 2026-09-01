@@ -2,7 +2,7 @@ import { RunnableSequence, RunnableLambda, RunnablePassthrough } from "@langchai
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import type { DocumentInterface } from "@langchain/core/documents";
 
-import { retriever, hybridSearcher, sentenceRetriever } from "../supabase";
+import { retriever, hybridSearcher, sentenceRetriever, childRetriever } from "../supabase";
 import { buildContext } from "../../utils/helpers";
 import { llm } from "../ollama";
 import { rerankTemplate, compressionTemplate } from "../prompts";
@@ -216,5 +216,36 @@ function expandToWindow(docs: DocumentInterface[]): CompressibleDoc[] {
 export const sentenceWindowRetrieveAndBuildContext = (filter: Record<string, unknown>) => RunnableSequence.from([
     sentenceRetriever(filter).withConfig({ runName: "vectorRetrieve" }),
     RunnableLambda.from(expandToWindow).withConfig({ runName: "expandWindow" }),
+    RunnableLambda.from(buildContext),
+]).withConfig({ runName: "retrieveAndBuildContext" });
+
+// Parent-document retrieval matched on small child chunks (tighter embeddings than a full
+// ~1000-char parent chunk, so retrieval precision improves), but a bare child chunk is often
+// too narrow to answer from — swap each hit's pageContent for its precomputed parent chunk
+// text (buildChildDocuments in ../parent-document.ts) before building citation context.
+// Multiple child hits often share the same parent, so dedupe by the resulting parent text,
+// same pattern as expandToWindow above.
+function expandToParent(docs: DocumentInterface[]): CompressibleDoc[] {
+    const seen = new Set<string>();
+    const expanded: CompressibleDoc[] = [];
+    for (const doc of docs) {
+        const parentText = (doc.metadata?.parentText as string | undefined) ?? doc.pageContent;
+        if (seen.has(parentText)) continue;
+        seen.add(parentText);
+        expanded.push({ pageContent: parentText, metadata: doc.metadata });
+    }
+    return expanded;
+}
+
+// Parent-document variant: retrieves against child-chunk-level embeddings (childRetriever,
+// child_documents table — see supabase.ts / supabaseScripts.txt STEP 11) instead of the
+// paragraph-level documents table, then expands each hit to its full parent chunk before
+// building citation context. The retrieve step reuses the "vectorRetrieve" runName and stays
+// bare Document[] output (same guardrail compressRetrieveAndBuildContext/sentence-window
+// follow above), so expansion is a second, distinctly-named step rather than folded into the
+// retriever itself.
+export const parentDocumentRetrieveAndBuildContext = (filter: Record<string, unknown>) => RunnableSequence.from([
+    childRetriever(filter).withConfig({ runName: "vectorRetrieve" }),
+    RunnableLambda.from(expandToParent).withConfig({ runName: "expandToParent" }),
     RunnableLambda.from(buildContext),
 ]).withConfig({ runName: "retrieveAndBuildContext" });

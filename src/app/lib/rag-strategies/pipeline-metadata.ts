@@ -40,6 +40,14 @@ const sentenceVectorRetrieve: PipelineStageMeta = {
     kind: "retrieve",
 };
 
+const childVectorRetrieve: PipelineStageMeta = {
+    id: "vectorRetrieve",
+    label: "Child Chunk Retrieval",
+    what: "Embeds the query and finds the most similar small child chunks (not the full parent chunk) in the document by cosine similarity.",
+    why: "A small, narrowly-scoped chunk embeds more precisely for a specific query than a large chunk whose meaning is blurred across several ideas — but it's too little context to answer from on its own, which the next step fixes.",
+    kind: "retrieve",
+};
+
 export const RAG_PIPELINE_STAGES: Record<RagMode, PipelineStageMeta[]> = {
     naive: [
         vectorRetrieve,
@@ -136,6 +144,17 @@ export const RAG_PIPELINE_STAGES: Record<RagMode, PipelineStageMeta[]> = {
             label: "Expand to Window",
             what: "Swaps each retrieved sentence for a window of it plus the 2 sentences before and after, precomputed at ingestion time.",
             why: "A single matched sentence is usually too little context to answer from on its own — expanding it back out to its surrounding sentences restores the context lost by indexing at sentence granularity.",
+            kind: "score",
+        },
+        answerLLM,
+    ],
+    "parent-document": [
+        childVectorRetrieve,
+        {
+            id: "expandToParent",
+            label: "Expand to Parent",
+            what: "Swaps each retrieved child chunk for its full parent chunk (~1000 characters), precomputed at ingestion time.",
+            why: "A small child chunk is often too narrow to answer from on its own — expanding back out to the parent chunk restores the surrounding context lost by indexing at child granularity. Multiple child hits under the same parent are deduped so it isn't cited twice.",
             kind: "score",
         },
         answerLLM,
