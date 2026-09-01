@@ -83,6 +83,16 @@ function CheckIcon() {
     );
 }
 
+export function InfoIcon({ className = "h-3 w-3" }: { className?: string }) {
+    return (
+        <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.6" />
+            <path d="M12 11v5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            <circle cx="12" cy="7.75" r="1" fill="currentColor" />
+        </svg>
+    );
+}
+
 function StageDots() {
     return (
         <span className="flex items-center gap-1">

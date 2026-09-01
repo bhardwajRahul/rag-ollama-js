@@ -52,7 +52,7 @@ export async function POST(req: Request) {
 
     const pageContent = pdfDoc.map(doc => doc.pageContent);
     const pageHeaders = pdfDoc.map(doc => ({
-        documentName: `${userId}.${fileExtension}`,
+        documentName: file.name,
         pageNumber: doc?.metadata?.loc?.pageNumber,
         userId,
     }));

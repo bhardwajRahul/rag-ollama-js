@@ -4,7 +4,9 @@ import { useState, useEffect } from "react";
 import { parse } from 'marked';
 import { RAG_MODES, RAG_STAGE_LABELS, DEFAULT_RAG_MODE, type RagMode, type RagStage } from "@/app/lib/rag-strategies/modes";
 import { Spinner } from "@/app/components/Spinner";
-import { RagPipelineVisualizer, type LiveStageState } from "@/app/components/RagPipelineVisualizer";
+import { RagPipelineVisualizer, InfoIcon, type LiveStageState } from "@/app/components/RagPipelineVisualizer";
+import { ChunkViewer, type ChunkRow } from "@/app/components/ChunkViewer";
+import type { ChunkIndex } from "@/app/lib/chunk-index";
 import type { RetrievedSource } from "@/app/utils/helpers";
 
 interface ChatMessage {
@@ -41,6 +43,12 @@ export default function Home() {
     const [uploading, setUploading] = useState<boolean>(false);
     const [pageNumber, setPageNumber] = useState<number>(1);
 
+    const [docView, setDocView] = useState<"pdf" | "chunks">("pdf");
+    const [chunkIndex, setChunkIndex] = useState<ChunkIndex>("documents");
+    const [chunksByIndex, setChunksByIndex] = useState<Partial<Record<ChunkIndex, ChunkRow[]>>>({});
+    const [chunksError, setChunksError] = useState<Partial<Record<ChunkIndex, string>>>({});
+    const [chunksLoading, setChunksLoading] = useState<boolean>(false);
+
     useEffect(() => {
         const userId = sessionStorage.getItem('userId') || '';
         setUser(userId);
@@ -58,6 +66,35 @@ export default function Home() {
         return () => URL.revokeObjectURL(fileUrl);
     }, [fileUrl])
 
+    // Chunks are a secondary/debugging view, not needed on every page load like the PDF is —
+    // fetch lazily on toggle, and cache per index so switching back and forth doesn't refetch.
+    useEffect(() => {
+        if (docView !== "chunks" || !user) return;
+        if (chunksByIndex[chunkIndex] || chunksError[chunkIndex]) {
+            setChunksLoading(false);
+            return;
+        }
+        let cancelled = false;
+        setChunksLoading(true);
+        fetch(`/api/document/chunks?index=${chunkIndex}`, { headers: { 'User-Id': user } })
+            .then(async (res) => {
+                if (!res.ok) throw new Error(await res.text());
+                return res.json();
+            })
+            .then((body: { chunks: ChunkRow[] }) => {
+                if (cancelled) return;
+                setChunksByIndex((prev) => ({ ...prev, [chunkIndex]: body.chunks }));
+            })
+            .catch((err) => {
+                if (cancelled) return;
+                setChunksError((prev) => ({ ...prev, [chunkIndex]: err instanceof Error ? err.message : 'Chunk fetch failed' }));
+            })
+            .finally(() => {
+                if (!cancelled) setChunksLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, [docView, chunkIndex, user, chunksByIndex, chunksError])
+
     const getFile = async () => {
         const res = await fetch('/api/document', { headers: { 'User-Id': user } });
         if (!res.ok) {
@@ -74,6 +111,7 @@ export default function Home() {
     const jumpToPage = (page: number) => {
         setPageNumber(page);
         setActivePanel('document');
+        setDocView('pdf');
     }
 
     const handleAnswerClick = (event: React.MouseEvent<HTMLSpanElement>, messageIndex: number) => {
@@ -184,6 +222,8 @@ export default function Home() {
                 }
             });
             setPageNumber(1);
+            setChunksByIndex({});
+            setChunksError({});
             await getFile();
         } finally {
             setUploading(false);
@@ -250,8 +290,9 @@ export default function Home() {
                     teaching aid you opt into, not something that should push the actual conversation
                     off-screen (especially on short mobile viewports). */}
                 <details className="shrink-0 border-b border-border px-4 py-3">
-                    <summary className="cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wide text-ink-faint hover:text-accent">
-                        How this mode works
+                    <summary className="flex cursor-pointer select-none items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint hover:text-accent">
+                        <InfoIcon className="h-3 w-3 shrink-0" />
+                        How this mode works — watch the pipeline live
                     </summary>
                     <div className="mt-3 max-h-64 overflow-y-auto">
                         <RagPipelineVisualizer
@@ -347,17 +388,37 @@ export default function Home() {
                 <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
                     <div>
                         <h2 className="text-sm font-semibold text-ink">Document</h2>
-                        <p className="text-xs text-ink-soft">{fileUrl ? `Page ${pageNumber}` : "Nothing uploaded yet"}</p>
+                        <p className="text-xs text-ink-soft">{fileUrl ? (docView === 'pdf' ? `Page ${pageNumber}` : "Stored chunks") : "Nothing uploaded yet"}</p>
                     </div>
-                    {fileUrl && (
-                        <button
-                            onClick={() => document.getElementById('fileUpload')?.click()}
-                            disabled={uploading}
-                            className="shrink-0 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-ink-soft transition-colors hover:bg-surface-muted disabled:opacity-50"
-                        >
-                            {uploading ? "Uploading…" : "Replace"}
-                        </button>
-                    )}
+                    <div className="flex items-center gap-2">
+                        {fileUrl && (
+                            <div className="flex shrink-0 rounded-lg border border-border p-0.5 text-xs font-medium">
+                                <button
+                                    type="button"
+                                    onClick={() => setDocView('pdf')}
+                                    className={`rounded-md px-2.5 py-1 transition-colors ${docView === 'pdf' ? 'bg-accent-soft text-accent' : 'text-ink-soft hover:bg-surface-muted'}`}
+                                >
+                                    PDF
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setDocView('chunks')}
+                                    className={`rounded-md px-2.5 py-1 transition-colors ${docView === 'chunks' ? 'bg-accent-soft text-accent' : 'text-ink-soft hover:bg-surface-muted'}`}
+                                >
+                                    Chunks
+                                </button>
+                            </div>
+                        )}
+                        {fileUrl && (
+                            <button
+                                onClick={() => document.getElementById('fileUpload')?.click()}
+                                disabled={uploading}
+                                className="shrink-0 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-ink-soft transition-colors hover:bg-surface-muted disabled:opacity-50"
+                            >
+                                {uploading ? "Uploading…" : "Replace"}
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {!fileChecked ? (
@@ -365,12 +426,23 @@ export default function Home() {
                         <Spinner className="h-6 w-6 text-ink-faint" />
                     </div>
                 ) : fileUrl ? (
-                    <iframe
-                        key={pageNumber}
-                        src={`${fileUrl}#page=${pageNumber}`}
-                        title="Uploaded document"
-                        className="min-h-0 w-full flex-1 border-0"
-                    />
+                    docView === 'pdf' ? (
+                        <iframe
+                            key={pageNumber}
+                            src={`${fileUrl}#page=${pageNumber}`}
+                            title="Uploaded document"
+                            className="min-h-0 w-full flex-1 border-0"
+                        />
+                    ) : (
+                        <ChunkViewer
+                            selectedIndex={chunkIndex}
+                            onSelectIndex={setChunkIndex}
+                            onJumpToPage={jumpToPage}
+                            chunks={chunksByIndex[chunkIndex] ?? null}
+                            loading={chunksLoading}
+                            error={chunksError[chunkIndex] ?? null}
+                        />
+                    )
                 ) : (
                     <div className="flex flex-1 items-center justify-center p-8">
                         <button

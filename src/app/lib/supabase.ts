@@ -3,6 +3,9 @@ import { createClient } from "@supabase/supabase-js";
 
 import { embeddings } from "./ollama";
 import { env } from "../utils/env";
+import { CHUNK_INDEXES, type ChunkIndex } from "./chunk-index";
+
+export { CHUNK_INDEXES, type ChunkIndex };
 
 const { supabase: { url, apiKey } } = env;
 
@@ -62,3 +65,15 @@ export const hybridSearcher = (filter: Record<string, unknown>) => async (query:
         metadata: row.metadata,
     }));
 };
+
+// Plain "list every stored chunk for this user" query, for the Chunks viewer UI. Unlike
+// vectorStore()/retriever() above, this has no query_embedding and doesn't go through a
+// match_* RPC — it's a direct table select ("browse what was stored"), not a similarity search
+// ("find relevant chunks"). All three chunk tables share the same {id, content, metadata,
+// embedding} shape, so one generic function covers all of them.
+export const getChunksByUser = (tableName: ChunkIndex, userId: string) =>
+    supabaseClient
+        .from(tableName)
+        .select("id, content, metadata")
+        .filter("metadata->>userId", "eq", userId)
+        .order("id", { ascending: true });
