@@ -3,22 +3,40 @@
 https://github.com/user-attachments/assets/e75e3571-098d-4654-b000-5fd23142f64f
 
 ## Introduction
-RAG-Ollama-JS is a Next.js application that implements Retrieval-Augmented Generation (RAG) using LangChain.js, Ollama, and Supabase. This project provides a user-friendly interface for document-based question-answering with PDF support. It also supports secured RAG with embeddings used only for logged in users.
+
+RAG-Ollama-JS is a hands-on **learning project** for exploring Retrieval-Augmented Generation end-to-end — not a polished product. It's a Next.js app where you upload a PDF, chat with it, and can switch between nine different RAG strategies per-question to see how each one changes retrieval and the final answer, with a live pipeline visualizer and optional LangFuse tracing to inspect what actually happened at each stage.
+
+Built with LangChain.js, Ollama (local/remote LLM + embeddings), and Supabase/pgvector for storage and retrieval.
 
 ## Features
-- **PDF Document Support**: Upload and view PDF documents with built-in navigation
-- **Real-time Chat Interface**: Interactive chat interface with streaming responses
-- **RAG Implementation**: 
-  - Uses LangChain.js for structured question processing
-  - Integrates with Ollama for language model capabilities
-  - Leverages Supabase for vector storage and document management
-- **Responsive UI**: Split-screen layout with PDF viewer and chat interface
-- **Context-Aware Responses**: Generates answers based on document content
+
+- **Nine RAG strategies, switchable per question** — grouped by which stage of the pipeline they change:
+  - **Retrieval strategy**: Naive RAG, Hybrid Search (keyword + vector, fused via RPC), Sentence-Window Retrieval, Parent-Document Retrieval
+  - **Query transformation**: Query Condensing (default — rewrites follow-ups into standalone questions), Multi-Query (fans out over several phrasings), HyDE (retrieves on a hypothetical answer draft instead of the question)
+  - **Post-retrieval**: Re-ranking (LLM scores 20 over-fetched candidates and keeps the top 4), Contextual Compression (LLM strips irrelevant sentences out of each retrieved chunk)
+- **Live pipeline visualizer** — a step-by-step diagram of whichever strategy is selected, showing each stage go pending → active → done in real time, with the actual prompt/completion and retrieved chunks available behind a "show raw I/O" disclosure per stage. Also frozen per assistant message so past answers stay inspectable.
+- **Inline source citations** — the LLM cites `[Source N]`, the client turns those into clickable links that jump the embedded PDF to the right page, plus "Page N" chips as a citation-free fallback.
+- **Chunks viewer** — browse the raw stored rows across all three chunk indexes (parent chunks, sentences, child chunks) that back the different retrieval strategies.
+- **Optional LangFuse tracing** — when configured, every chat request is traced (latency, token counts, prompt/completion per chain node, tagged with the active RAG mode) so strategies can be compared side by side.
+- **Streaming chat** over SSE, with an always-visible embedded PDF viewer (plain `<iframe>`, no client-side PDF renderer).
+
+## Why this project exists
+
+This repo exists to build a working, comparable implementation of the major RAG techniques rather than reading about them — each strategy is a small, isolated LangChain runnable composition so its effect can be studied in isolation via the pipeline visualizer and LangFuse traces. Planned next steps include a RAGAS-style automated evaluation layer (faithfulness / answer relevancy) and a LangFuse-backed leaderboard for comparing strategies quantitatively rather than just eyeballing answers.
+
+## Evaluation (raglens)
+
+Automated scoring is planned via [**raglens**](https://github.com/AbhisekMishra/raglens) — a small TypeScript package (also built by the author of this repo) that reimplements RAGAS-style RAG metrics without requiring Python. It scores a `{question, answer, contexts}` sample against a pluggable `Judge` (an Ollama adapter ships built-in) and currently provides:
+- **faithfulness** — decomposes the answer into factual statements and verifies each against the retrieved contexts
+- **answer_relevancy** — LLM-judged relevance of the answer to the question
+
+`raglens` is already listed as a dependency (`package.json`) but is **not yet wired into this app** — the plan is a golden question set run through each `ragMode`, scored with `raglens`, and pushed to LangFuse so the nine strategies above can be compared quantitatively instead of by eye.
 
 ## Prerequisites
+
 - Node.js (Latest LTS version)
-- Ollama running locally or remotely
-- Supabase account and project
+- Ollama running locally or remotely (chat model + embeddings model)
+- Supabase project with `pgvector` enabled
 
 ## Installation
 
@@ -44,7 +62,9 @@ OLLAMA_LLM_MODEL=your_preferred_model
 OLLAMA_EMBEDDINGS_BASE_URL=http://localhost:11434
 OLLAMA_EMBEDDINGS_MODEL=nomic-embed-text
 ```
-4. Run the supabase commands mentioned in **[`supabaseScripts.txt`](https://github.com/AbhisekMishra/rag-ollama-js/blob/main/supabaseScripts.txt)**
+   - Optionally, add `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASEURL` to enable request tracing. The app runs fine without them.
+
+4. Run the Supabase setup script mentioned in **[`supabaseScripts.txt`](https://github.com/AbhisekMishra/rag-ollama-js/blob/main/supabaseScripts.txt)** against your project. This creates the core `documents`/`match_documents` table+RPC, the `users` table and password RPCs, plus the extra tables/RPCs required by hybrid search, sentence-window, and parent-document retrieval specifically (see the file's step markers). A `document_store` storage bucket is also expected.
 
 5. Start the development server:
 ```bash
@@ -56,36 +76,53 @@ npm run dev
 1. **Upload Document**:
    - Click the "Upload File" button in the right panel
    - Select a PDF document to upload
-   - The document will be processed and stored in Supabase
+   - The document is chunked and embedded into Supabase across the indexes needed by the strategies above
 
-2. **View Document**:
-   - Navigate through pages using arrow buttons or scroll
-   - Page number indicator shows current position
+2. **Pick a RAG strategy**:
+   - Choose a mode from the picker before asking a question
+   - Watch the pipeline visualizer walk through that strategy's stages live
 
 3. **Ask Questions**:
    - Type your question in the chat input
-   - Receive context-aware responses based on the document content
-   - View conversation history in the chat panel
+   - Receive a streamed, context-aware, citation-linked answer
+   - Expand "How this answer was generated" on any answer to replay its pipeline trace
+
+4. **View Document**:
+   - The PDF stays open in an embedded viewer; citations and page chips jump it to the right page
 
 ## Technical Stack
 
-- **Frontend**: Next.js with TypeScript
-- **UI Framework**: Tailwind CSS
-- **PDF Handling**: react-pdf
-- **Language Model**: Ollama
-- **Vector Store**: Supabase
-- **RAG Implementation**: LangChain.js
+- **Frontend**: Next.js (App Router) with TypeScript, Tailwind CSS
+- **RAG orchestration**: LangChain.js (`@langchain/core`, plain `RunnableSequence`/`RunnableLambda` compositions per strategy)
+- **Language model & embeddings**: Ollama
+- **Vector store**: Supabase / pgvector
+- **Observability**: LangFuse (OpenTelemetry-based, optional)
+- **PDF viewing**: plain `<iframe>` over an object URL (no client-side PDF renderer)
 
 ## Project Structure
 
 ```plaintext
 src/
 ├── app/
-│   ├── api/         # API routes for chat and document handling
-│   ├── home/        # Main application page
-│   ├── lib/         # Core libraries (Ollama, Supabase, prompts)
-│   └── utils/       # Helper functions and environment config
+│   ├── api/                  # API routes: chat (SSE streaming), document ingestion, auth
+│   ├── home/                 # Main chat + document UI
+│   ├── components/           # RagPipelineVisualizer and other UI pieces
+│   ├── lib/
+│   │   ├── rag-strategies/   # One file per RAG technique + the mode registry
+│   │   ├── ollama.ts         # Shared ChatOllama / OllamaEmbeddings singletons
+│   │   ├── supabase.ts       # Supabase client + per-index vector store/retriever factories
+│   │   ├── sentence-window.ts
+│   │   ├── parent-document.ts
+│   │   └── prompts.ts        # All prompt templates
+│   └── utils/                # Helper functions and centralized env config
+└── instrumentation.ts        # LangFuse/OpenTelemetry wiring
 ```
+
+See [`CLAUDE.md`](CLAUDE.md) for a deep dive into how each RAG strategy and the streaming/citation/visualizer pipeline actually works.
+
+## A note on auth
+
+Login/signup issue no session or JWT — the client just stores the username client-side and sends it back as a `User-Id` header on every request. This is **not** a real auth boundary (it's trivially spoofable); it exists only to scope one user to one uploaded document at a time, which is enough for a learning/demo project but not for production use.
 
 ## Contributing
 
